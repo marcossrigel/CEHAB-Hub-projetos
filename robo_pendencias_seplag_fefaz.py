@@ -5,13 +5,11 @@ import os
 import re
 import json
 import time
-from datetime import datetime
-import tkinter as tk
-import threading
 import sys
-import getpass
-from tkinter import messagebox
-from tkinter import scrolledtext
+import threading
+import tkinter as tk
+from tkinter.scrolledtext import ScrolledText
+from datetime import datetime
 
 import pyperclip
 from selenium.webdriver.common.keys import Keys
@@ -40,21 +38,89 @@ REGEX_SEI = r"\d{7,}\.\d+\/\d{4}-\d+"
 SEI_RE = re.compile(REGEX_SEI)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DADOS_DIR = os.path.join(BASE_DIR, "dados_robo")
-USUARIOS_DIR = os.path.join(DADOS_DIR, "usuarios")
+OUT_DIR = os.path.join(BASE_DIR, "downloaded_files")
+MAP_JSON = os.path.join(OUT_DIR, "sei_last_doc_map.json")
 
-caminho1 = os.path.join(DADOS_DIR, "credenciais_sheets.json")
-caminho2 = os.path.join(DADOS_DIR, "usuarios", "credenciais_sheets.json")
-caminho3 = os.path.join(BASE_DIR, "arquivos_json", "credenciais_sheets.json")
 
-if os.path.exists(caminho1):
-    CRED_JSON = caminho1
-elif os.path.exists(caminho2):
-    CRED_JSON = caminho2
-elif os.path.exists(caminho3):
-    CRED_JSON = caminho3
-else:
-    CRED_JSON = caminho1
+class FloatingConsole:
+    def __init__(self):
+        self.root = None
+        self.text = None
+        self.ready = False
+
+    def start(self):
+        thread = threading.Thread(target=self._run_ui, daemon=True)
+        thread.start()
+
+        limite = time.time() + 5
+        while not self.ready and time.time() < limite:
+            time.sleep(0.05)
+
+    def _run_ui(self):
+        self.root = tk.Tk()
+        self.root.title("Log do Robô")
+        self.root.configure(bg="black")
+        self.root.geometry("950x500+900+120")
+        self.root.attributes("-topmost", True)
+
+        self.text = ScrolledText(
+            self.root,
+            bg="black",
+            fg="white",
+            insertbackground="white",
+            font=("Consolas", 10),
+            wrap="word",
+            relief="flat",
+            borderwidth=0
+        )
+        self.text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.text.config(state="disabled")
+
+        self.ready = True
+        self.root.mainloop()
+
+    def write(self, message: str):
+        if not self.ready or not self.root or not self.text:
+            return
+
+        def _append():
+            try:
+                self.text.config(state="normal")
+                self.text.insert("end", message)
+                self.text.see("end")
+                self.text.config(state="disabled")
+            except Exception:
+                pass
+
+        try:
+            self.root.after(0, _append)
+        except Exception:
+            pass
+
+
+class DualLogger:
+    def __init__(self, original_stream, floating_console: FloatingConsole):
+        self.original_stream = original_stream
+        self.floating_console = floating_console
+
+    def write(self, message):
+        try:
+            self.original_stream.write(message)
+            self.original_stream.flush()
+        except Exception:
+            pass
+
+        try:
+            self.floating_console.write(message)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.original_stream.flush()
+        except Exception:
+            pass
+
 
 def normalize(s: str) -> str:
     return (s or "").strip().upper()
@@ -65,74 +131,20 @@ def safe_name(s: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", s)[:120]
 
 
-def safe_user_folder_name(usuario: str) -> str:
-    usuario = (usuario or "").strip()
-    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", usuario)
-
-def get_user_dirs(usuario: str) -> dict:
-    usuario_safe = safe_user_folder_name(usuario)
-    pasta_usuario = os.path.join(USUARIOS_DIR, usuario_safe)
-    chrome_profile = os.path.join(pasta_usuario, "chrome_profile")
-    map_json = os.path.join(pasta_usuario, "sei_last_doc_map.json")
-    config_json = os.path.join(pasta_usuario, "config.json")
-
-    os.makedirs(chrome_profile, exist_ok=True)
-
-    return {
-        "base": pasta_usuario,
-        "chrome_profile": chrome_profile,
-        "map_json": map_json,
-        "config_json": config_json,
-    }
-
-def load_map(map_json: str) -> dict:
-    if not os.path.exists(map_json):
+def load_map() -> dict:
+    if not os.path.exists(MAP_JSON):
         return {}
     try:
-        with open(map_json, "r", encoding="utf-8") as f:
+        with open(MAP_JSON, "r", encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception:
         return {}
 
-def save_map(map_json: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(map_json), exist_ok=True)
-    with open(map_json, "w", encoding="utf-8") as f:
+
+def save_map(data: dict) -> None:
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(MAP_JSON, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
-def load_json_file(path: str, default):
-    if not os.path.exists(path):
-        return default
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-def save_json_file(path: str, data) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def escolher_ou_cadastrar_usuario():
-    os.makedirs(USUARIOS_DIR, exist_ok=True)
-
-    print("\n=== ACESSO DO USUÁRIO ===")
-    print("Digite seu usuário SEI.")
-    print("Na primeira vez, o robô salva sua configuração.")
-    print("Nas próximas, reutiliza seu perfil do Chrome.\n")
-
-    while True:
-        usuario = input("Usuário SEI: ").strip()
-        if usuario:
-            return usuario
-        print("❌ Usuário não pode ficar vazio.")
-
-def pedir_senha():
-    while True:
-        senha = getpass.getpass("Senha SEI: ").strip()
-        if senha:
-            return senha
-        print("❌ Senha não pode ficar vazia.")
 
 
 def pick_last_sei_from_cell(cell: str) -> str:
@@ -356,7 +368,118 @@ def get_visible_files_in_tree(sb: SB) -> list[tuple[str, str]]:
     return items
 
 
-def wait_for_whatsapp_ready(sb: SB, timeout: int = 30) -> str:
+def wait_for_whatsapp_login(sb: SB, timeout: int = 180) -> None:
+    print("⏳ Aguardando login no WhatsApp Web...")
+
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            url = sb.get_current_url()
+
+            if "web.whatsapp.com" in url:
+                seletores_logado = [
+                    '//div[@id="pane-side"]',
+                    '//div[@title="Pesquisar"]',
+                    '//button[@aria-label="Nova conversa"]',
+                    '//span[@data-icon="chat"]',
+                ]
+                for sel in seletores_logado:
+                    try:
+                        if sb.is_element_visible(sel):
+                            print("✅ WhatsApp Web logado.")
+                            return
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+    raise RuntimeError(
+        "Tempo esgotado aguardando login no WhatsApp Web. "
+        "Escaneie o QR Code na primeira execução."
+    )
+
+
+def click_first_visible(sb: SB, seletores, timeout_por_item=3) -> bool:
+    for sel in seletores:
+        try:
+            if sb.is_element_visible(sel, timeout=timeout_por_item):
+                try:
+                    sb.click(sel)
+                except Exception:
+                    sb.js_click(sel)
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def abrir_convite_grupo_no_whatsapp_web(sb: SB, link_grupo: str, timeout: int = 120) -> None:
+    print("🔗 Abrindo link do grupo...")
+    sb.open(link_grupo)
+    sb.wait_for_ready_state_complete()
+    time.sleep(2)
+
+    botoes_continuar = [
+        '//*[@id="whatsapp-web-button"]',
+        '//*[@id="whatsapp-web-button"]/span',
+        '//a[@id="whatsapp-web-button"]',
+        '//a[contains(@href, "web.whatsapp.com")]',
+        '//span[contains(normalize-space(.), "Continuar para o WhatsApp Web")]',
+        '//a[contains(., "Continuar para o WhatsApp Web")]',
+    ]
+
+    clicou = click_first_visible(sb, botoes_continuar, timeout_por_item=4)
+    if not clicou:
+        raise RuntimeError("Não consegui clicar em 'Continuar para o WhatsApp Web'.")
+
+    time.sleep(3)
+
+    # em alguns casos abre nova aba
+    try:
+        sb.switch_to_window(-1)
+    except Exception:
+        pass
+
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if "web.whatsapp.com" in sb.get_current_url():
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    sb.wait_for_ready_state_complete()
+
+    # se estiver deslogado, aguarda QR scan
+    wait_for_whatsapp_login(sb, timeout=180)
+
+    # depois do login, reabre o link do grupo para cair no chat/grupo certo
+    print("🔁 Reabrindo o convite do grupo já com sessão logada...")
+    sb.open(link_grupo)
+    sb.wait_for_ready_state_complete()
+    time.sleep(3)
+
+    # em alguns fluxos aparece botão para entrar no grupo
+    possiveis_botoes_entrar = [
+        '//span[contains(normalize-space(.), "Entrar no grupo")]',
+        '//button[.//span[contains(normalize-space(.), "Entrar no grupo")]]',
+        '//span[contains(normalize-space(.), "Entrar na conversa")]',
+        '//button[.//span[contains(normalize-space(.), "Entrar na conversa")]]',
+        '//span[contains(normalize-space(.), "Abrir conversa")]',
+        '//button[.//span[contains(normalize-space(.), "Abrir conversa")]]',
+        '//span[contains(normalize-space(.), "Join group")]',
+        '//button[.//span[contains(normalize-space(.), "Join group")]]',
+    ]
+    click_first_visible(sb, possiveis_botoes_entrar, timeout_por_item=3)
+
+    sb.wait_for_ready_state_complete()
+    time.sleep(3)
+
+
+def wait_for_whatsapp_ready(sb: SB, timeout: int = 60) -> str:
     possiveis_caixas = [
         '//footer//*[@contenteditable="true"][@data-tab]',
         '//footer//*[@contenteditable="true"]',
@@ -376,64 +499,17 @@ def wait_for_whatsapp_ready(sb: SB, timeout: int = 30) -> str:
                 pass
         time.sleep(0.5)
 
-    raise RuntimeError("Não consegui localizar a caixa de mensagem do WhatsApp.")
+    raise RuntimeError(
+        "Não consegui localizar a caixa de mensagem do WhatsApp. "
+        "O grupo pode não ter sido aberto corretamente."
+    )
 
 
-def enviar_whatsapp(sb: SB, link_grupo: str, mensagem: str, timeout: int = 120):
-    print("🔗 Abrindo link do grupo...")
-    sb.open(link_grupo)
-    sb.wait_for_ready_state_complete()
+def enviar_whatsapp(sb: SB, link_grupo: str, mensagem: str, timeout: int = 180):
+    abrir_convite_grupo_no_whatsapp_web(sb, link_grupo, timeout=timeout)
 
-    time.sleep(2)
-
-    possiveis_botoes_continuar = [
-        '//*[@id="whatsapp-web-button"]',
-        '//*[@id="whatsapp-web-button"]/span',
-        '//a[@id="whatsapp-web-button"]',
-        '//a[contains(@href, "web.whatsapp.com")]',
-        '//span[contains(normalize-space(.), "Continuar para o WhatsApp Web")]',
-        '//a[contains(., "Continuar para o WhatsApp Web")]',
-    ]
-
-    clicou_continuar = False
-
-    for sel in possiveis_botoes_continuar:
-        try:
-            if sb.is_element_visible(sel, timeout=4):
-                print(f"🖱️ Clicando em: {sel}")
-                try:
-                    sb.click(sel)
-                except Exception:
-                    sb.js_click(sel)
-                clicou_continuar = True
-                break
-        except Exception:
-            pass
-
-    if not clicou_continuar:
-        raise RuntimeError("Não consegui clicar em 'Continuar para o WhatsApp Web'.")
-
-    time.sleep(4)
-
-    try:
-        sb.switch_to_window(-1)
-    except Exception:
-        pass
-
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            url_atual = sb.get_current_url()
-            if "web.whatsapp.com" in url_atual:
-                break
-        except Exception:
-            pass
-        time.sleep(0.5)
-
-    sb.wait_for_ready_state_complete()
-
-    caixa_usada = wait_for_whatsapp_ready(sb, timeout=timeout)
-
+    print("⏳ Aguardando caixa de mensagem do WhatsApp...")
+    caixa_usada = wait_for_whatsapp_ready(sb, timeout=60)
     print(f"✅ Caixa encontrada: {caixa_usada}")
 
     try:
@@ -488,65 +564,54 @@ def enviar_whatsapp(sb: SB, link_grupo: str, mensagem: str, timeout: int = 120):
         except Exception:
             pass
 
-    if enviado:
-        print("📨 Mensagem enviada no grupo!")
-    else:
+    if not enviado:
         raise RuntimeError("Não consegui enviar a mensagem no WhatsApp.")
 
+    print("📨 Mensagem enviada no grupo!")
 
-class RedirecionarTexto:
-    def __init__(self, widget_texto):
-        self.widget_texto = widget_texto
+floating_console = FloatingConsole()
 
-    def write(self, texto):
-        if texto.strip():
-            self.widget_texto.insert(tk.END, texto)
-            self.widget_texto.see(tk.END)
-            self.widget_texto.update_idletasks()
+def main():
+    floating_console.start()
+    sys.stderr = DualLogger(sys.__stderr__, floating_console)
 
-    def flush(self):
-        pass
+    os.makedirs(OUT_DIR, exist_ok=True)
 
-def abrir_janela_log():
-    janela = tk.Tk()
-    janela.title("Monitor de Execução do Robô")
-    janela.geometry("900x600")
+    seis, sei_to_dest, sei_to_objeto = fetch_seis_from_sheet_api()
+    if not seis:
+        print("⚠️ Nenhum SEI encontrado (ou todos estão CONCLUÍDO).")
+        return
 
-    txt_log = scrolledtext.ScrolledText(
-        janela,
-        wrap="word",
-        font=("Consolas", 10)
-    )
-    txt_log.pack(fill="both", expand=True, padx=10, pady=10)
+    print(f"📄 SEIs válidos (não concluídos): {len(seis)}")
 
-    sys.stdout = RedirecionarTexto(txt_log)
-    sys.stderr = RedirecionarTexto(txt_log)
+    old_map = load_map()
+    new_map = dict(old_map)
+    mudancas = {}
 
-    return janela
+    sei_user = os.getenv("SEI_USER", "marcos.rigel")
+    sei_pass = os.getenv("SEI_PASS", "Abc123!@")
 
-def fazer_login_sei(sb: SB, sei_user: str, sei_pass: str) -> bool:
-    sb.open(SEI_LOGIN_URL)
-    sb.wait_for_ready_state_complete()
+    with SB(
+        uc=False,
+        headless=False,
+        user_data_dir=r"C:\temp\chrome_profile_whatsapp"
+    ) as sb:
 
-    try:
-        if sb.is_element_visible(XP_TXT_PESQUISA_RAPIDA, timeout=5):
-            print("✅ Já estava logado no SEI.")
-            return True
-    except Exception:
-        pass
+        sb.open(SEI_LOGIN_URL)
+        sb.wait_for_ready_state_complete()
 
-    try:
-        sb.wait_for_element_visible(XP_USUARIO, timeout=30)
-        sb.type(XP_USUARIO, sei_user)
+        if not sb.is_element_visible(XP_TXT_PESQUISA_RAPIDA):
+            sb.wait_for_element_visible(XP_USUARIO, timeout=30)
+            sb.type(XP_USUARIO, sei_user)
 
-        sb.wait_for_element_visible(XP_SENHA, timeout=30)
-        sb.type(XP_SENHA, sei_pass)
+            sb.wait_for_element_visible(XP_SENHA, timeout=30)
+            sb.type(XP_SENHA, sei_pass)
 
-        sb.wait_for_element_visible(CSS_SELECT_ORGAO, timeout=30)
-        sb.select_option_by_text(CSS_SELECT_ORGAO, "CEHAB")
+            sb.wait_for_element_visible(CSS_SELECT_ORGAO, timeout=30)
+            sb.select_option_by_text(CSS_SELECT_ORGAO, "CEHAB")
 
-        sb.wait_for_element_visible(CSS_BTN_ACESSAR, timeout=30)
-        sb.click(CSS_BTN_ACESSAR)
+            sb.wait_for_element_visible(CSS_BTN_ACESSAR, timeout=30)
+            sb.click(CSS_BTN_ACESSAR)
 
         try:
             sb.accept_alert(timeout=2)
@@ -558,69 +623,7 @@ def fazer_login_sei(sb: SB, sei_user: str, sei_pass: str) -> bool:
         except Exception:
             pass
 
-        sb.wait_for_element_visible(XP_TXT_PESQUISA_RAPIDA, timeout=25)
-        print("✅ Login no SEI realizado com sucesso.")
-        return True
-
-    except Exception as e:
-        print(f"❌ Falha no login do SEI: {e}")
-        return False
-
-
-def executar_robo():
-    os.makedirs(DADOS_DIR, exist_ok=True)
-    os.makedirs(USUARIOS_DIR, exist_ok=True)
-
-    if not os.path.exists(CRED_JSON):
-        print(f"❌ Arquivo de credenciais não encontrado: {CRED_JSON}")
-        return
-
-    seis, sei_to_dest, sei_to_objeto = fetch_seis_from_sheet_api()
-    if not seis:
-        print("⚠️ Nenhum SEI encontrado (ou todos estão CONCLUÍDO).")
-        return
-
-    print(f"📄 SEIs válidos (não concluídos): {len(seis)}")
-
-    sei_user = escolher_ou_cadastrar_usuario()
-    dirs = get_user_dirs(sei_user)
-
-    config = load_json_file(dirs["config_json"], {})
-    senha_salva = (config.get("sei_pass") or "").strip()
-
-    if senha_salva:
-        usar_salva = messagebox.askyesno("Senha", "Usar senha salva?")
-        if usar_salva:
-            sei_pass = senha_salva
-        else:
-            sei_pass = pedir_senha()
-    else:
-        sei_pass = pedir_senha()
-
-    old_map = load_map(dirs["map_json"])
-    new_map = dict(old_map)
-    mudancas = {}
-
-    with SB(
-        uc=False,
-        headless=False,
-        user_data_dir=dirs["chrome_profile"]
-    ) as sb:
-
-        while True:
-            ok = fazer_login_sei(sb, sei_user, sei_pass)
-            if ok:
-                break
-
-            print("\n⚠️ Usuário ou senha inválidos. Tente novamente.")
-            sei_user = escolher_ou_cadastrar_usuario()
-            dirs = get_user_dirs(sei_user)
-            sei_pass = pedir_senha()
-
-        save_json_file(dirs["config_json"], {
-            "sei_user": sei_user,
-            "sei_pass": sei_pass
-        })
+        sb.wait_for_element_visible(XP_TXT_PESQUISA_RAPIDA, timeout=60)
 
         sei_quick_search(sb, seis[0])
         tree_frame = find_tree_frame(sb, timeout=40)
@@ -683,7 +686,7 @@ def executar_robo():
                 print("   🔁 Mudou?    :", "SIM" if mudou else "NÃO")
 
                 new_map[sei] = ultimo_txt
-                save_map(dirs["map_json"], new_map)
+                save_map(new_map)
 
             except Exception as e:
                 print("   ❌ Erro neste SEI:", repr(e))
@@ -701,8 +704,8 @@ def executar_robo():
             linhas.append("Nenhum SEI mudou ✅")
         else:
             for sei_k, info in mudancas.items():
-                dest = sei_to_dest.get(sei_k, '—')
-                objeto = sei_to_objeto.get(sei_k, '—')
+                dest = sei_to_dest.get(sei_k, "—")
+                objeto = sei_to_objeto.get(sei_k, "—")
 
                 linhas.append(f"{sei_k} - {dest}")
                 linhas.append(f"Objeto: {objeto}")
@@ -716,7 +719,7 @@ def executar_robo():
         print(mensagem_final)
         print("==============================")
 
-        save_map(dirs["map_json"], new_map)
+        save_map(new_map)
 
         if mudancas:
             try:
@@ -725,12 +728,8 @@ def executar_robo():
                 print(f"⚠️ Erro ao enviar no WhatsApp: {e}")
 
     print("\n✅ Finalizado com sucesso!")
+    input("\n👉 Pressione ENTER para fechar o terminal...")
 
-def main():
-    janela = abrir_janela_log()
-    thread = threading.Thread(target=executar_robo, daemon=True)
-    thread.start()
-    janela.mainloop()
 
 if __name__ == "__main__":
     main()
