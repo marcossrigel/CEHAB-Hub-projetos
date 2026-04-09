@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import messagebox
-
+import subprocess
+import sys
+import os
 
 class HubRobosApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -18,7 +20,10 @@ class HubRobosApp:
         frame_principal.pack(fill="both", expand=True, padx=24, pady=24)
 
         self._criar_topo(frame_principal)
-        self._criar_painel(frame_principal)
+        self.frame_conteudo = tk.Frame(frame_principal, bg="#f3f6fb")
+        self.frame_conteudo.pack(fill="both", expand=True)
+        self._criar_painel(self.frame_conteudo)
+
         self._criar_rodape(frame_principal)
 
     def _criar_topo(self, parent: tk.Frame) -> None:
@@ -60,39 +65,111 @@ class HubRobosApp:
             fg="#64748b",
         ).pack(side="right")
 
+    
     def _criar_painel(self, parent: tk.Frame) -> None:
         painel = tk.Frame(parent, bg="#f3f6fb")
         painel.pack(fill="both", expand=True)
 
-        container = tk.Frame(painel, bg="#f3f6fb")
-        container.pack(pady=40)
+        canvas = tk.Canvas(
+            painel,
+            bg="#f3f6fb",
+            highlightthickness=0,
+            bd=0
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar_y = tk.Scrollbar(painel, orient="vertical", command=canvas.yview)
+        scrollbar_y.pack(side="right", fill="y")
+
+        canvas.configure(yscrollcommand=scrollbar_y.set)
+
+        container = tk.Frame(canvas, bg="#f3f6fb")
+        janela_canvas = canvas.create_window((0, 0), window=container, anchor="n")
+
+        def atualizar_scroll_region(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def ajustar_largura_frame(event):
+            canvas.itemconfigure(janela_canvas, width=event.width)
+
+        def centralizar_grid(event=None):
+            largura_canvas = canvas.winfo_width()
+            largura_grid = grid.winfo_reqwidth()
+            x = max((largura_canvas - largura_grid) // 2, 0)
+            canvas.coords(janela_canvas, x, 0)
+
+        container.bind("<Configure>", atualizar_scroll_region)
+        canvas.bind("<Configure>", ajustar_largura_frame)
+        canvas.bind("<Configure>", centralizar_grid, add="+")
 
         grid = tk.Frame(container, bg="#f3f6fb")
-        grid.pack()
+        grid.pack(pady=40)
 
         modulos = [
-            ("Robo de Destaques", "Acompanhar e executar rotinas de destaques."),
-            ("Robo de Pendencias (SEFAZ/SEPLAG)", "Monitoramento e tratamento de pendências."),
-            ("Robo de Seis Parados", "Controle e verificação de SEIs sem andamento."),
-            ("Gerador de OBS", "Geração e organização das observações do processo."),
-            ("Robo Solicitação de Pagamento", "Fluxo automatizado de solicitações de pagamento."),
-            ("Solicitação de Pagamentos BM 2026", "Acompanhamento específico dos pagamentos BM 2026."),
+            {
+                "titulo": "Robo Pendências (SEFAZ/SEPLAG)",
+                "descricao": "Na planilha de Solicitações SEPLAG - SEFAZ, captura todos os SEIs que não estão concluídos e verifica se tiveram novos documentos",
+                "arquivo": "robo_pendencias_seplag_sefaz.py",
+            },
+            {
+                "titulo": "Robo Destaques Orçamentários",
+                "descricao": "Na planilha de CONTROLE - DESTAQUES ORÇAMENTÁRIOS, captura todos os SEIs e verifica se tiveram novos documentos",
+                "arquivo": "robo_destaques_orcamentarios.py",
+            },
+            {
+                "titulo": "Robo Seis Parados",
+                "descricao": "Utiliza a planilha de Solicitações SEPLAG - SEFAZ para verificar os SEIs que não tiveram novos documentos",
+                "arquivo": None,
+            },
+            {
+                "titulo": "Robo Solicitação de Pagamentos BM 2026",
+                "descricao": "Acompanhamento específico dos pagamentos BM 2026.",
+                "arquivo": None,
+            },
+            {
+                "titulo": "Robo Solicitação de Pagamento",
+                "descricao": "Fluxo automatizado de solicitações de pagamento.",
+                "arquivo": None,
+            },
+            {
+                "titulo": "Robo Ofícios",
+                "descricao": "Geração e organização das observações do processo.",
+                "arquivo": None,
+            },
         ]
 
-        for indice, (titulo, descricao) in enumerate(modulos):
+        for indice, modulo in enumerate(modulos):
             linha = indice // 3
             coluna = indice % 3
-            card = self._criar_card(grid, titulo, descricao)
+            card = self._criar_card(
+                grid,
+                modulo["titulo"],
+                modulo["descricao"],
+                modulo["arquivo"],
+            )
             card.grid(row=linha, column=coluna, padx=14, pady=14)
 
-    def _criar_card(self, parent: tk.Frame, titulo: str, descricao: str) -> tk.Frame:
+        def rolar_mousewheel(event):
+            if event.delta:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            else:
+                if event.num == 4:
+                    canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    canvas.yview_scroll(1, "units")
+
+        canvas.bind_all("<MouseWheel>", rolar_mousewheel)
+        canvas.bind_all("<Button-4>", rolar_mousewheel)
+        canvas.bind_all("<Button-5>", rolar_mousewheel)
+
+    def _criar_card(self, parent: tk.Frame, titulo: str, descricao: str, arquivo: str | None) -> tk.Frame:
         card = tk.Frame(
             parent,
             bg="#ffffff",
             bd=1,
             relief="solid",
-            width=250,
-            height=250,
+            width=300,
+            height=300,
             cursor="arrow",
             highlightthickness=1,
             highlightbackground="#dbe3f0",
@@ -160,12 +237,21 @@ class HubRobosApp:
             relief="flat",
             bd=0,
             cursor="hand2",
-            command=lambda nome=titulo: self._abrir_modulo(nome),
+            command=lambda nome=titulo, arq=arquivo: self._abrir_modulo(nome, arq),
         )
         botao.pack(side="bottom", anchor="w", padx=18, pady=(0, 18), ipadx=12, ipady=8)
 
         botao.bind("<Enter>", lambda e, b=botao: b.configure(bg="#1d4ed8"))
         botao.bind("<Leave>", lambda e, b=botao: b.configure(bg="#2563eb"))
+
+        def clicar_card(event=None, nome=titulo, arq=arquivo):
+            self._abrir_modulo(nome, arq)
+
+        widgets_clicaveis = [card, topo_card, corpo, lbl_titulo, lbl_descricao, indicador]
+
+        for widget in widgets_clicaveis:
+            widget.bind("<Button-1>", clicar_card)
+            widget.configure(cursor="hand2")
 
         return card
 
@@ -202,9 +288,41 @@ class HubRobosApp:
             )
             botao.configure(bg="#2563eb")
 
-    def _abrir_modulo(self, nome: str) -> None:
+    def _limpar_conteudo(self):
+        for widget in self.frame_conteudo.winfo_children():
+            widget.destroy()
+
+    def _abrir_modulo(self, nome: str, arquivo: str | None) -> None:
         self.label_status.config(text=f"Status: módulo selecionado -> {nome}")
-        messagebox.showinfo("Módulo", f"O módulo '{nome}' será conectado na próxima etapa.")
+
+        if not arquivo:
+            messagebox.showwarning("Módulo", f"O módulo '{nome}' ainda não possui arquivo vinculado.")
+            return
+
+        # 👉 resto continua igual (robôs)
+        pasta_base = os.path.dirname(os.path.abspath(__file__))
+        caminho_arquivo = os.path.join(pasta_base, arquivo)
+
+        if not os.path.exists(caminho_arquivo):
+            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{caminho_arquivo}")
+            return
+
+        precisa_confirmacao = nome.strip().lower().startswith("robo")
+
+        if precisa_confirmacao:
+            confirmar = messagebox.askyesno(
+                "Confirmar execução",
+                f"Deseja executar o módulo '{nome}'?"
+            )
+            if not confirmar:
+                self.label_status.config(text=f"Status: execução cancelada -> {nome}")
+                return
+
+        try:
+            subprocess.Popen([sys.executable, caminho_arquivo])
+            self.label_status.config(text=f"Status: módulo aberto -> {nome}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Não foi possível abrir o módulo '{nome}'.\n\nDetalhes: {e}")
 
 
 def main() -> None:
