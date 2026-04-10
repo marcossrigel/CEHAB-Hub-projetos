@@ -307,14 +307,6 @@ def open_last_doc(sb: SB, num: str) -> None:
     except Exception:
         sb.click(xp_span)
 
-
-def save_screenshot(sb: SB, folder: str, prefix: str) -> str:
-    os.makedirs(folder, exist_ok=True)
-    filename = f"{prefix}_{now_ts()}.png"
-    path = os.path.join(folder, filename)
-    sb.save_screenshot(path)
-    return path
-
 class FloatingConsole:
     def __init__(self):
         self.root = None
@@ -495,22 +487,12 @@ def main():
 
                     screenshot_paths = []
 
-                    if qtd_novos > 0:
-                        for num_item, txt_item in novos:
-                            click_papel_azul_do_item(sb, num_item)
-                            open_last_doc(sb, num_item)
-                            sb.sleep(1.2)
-
-                            prefix = f"sei_{safe_name(sei)}_{safe_name(txt_item)[:50]}"
-                            shot = save_screenshot(sb, folder=pasta_hoje, prefix=prefix)
-                            screenshot_paths.append(shot)
-
-                        mudancas[sei] = {
-                            "qtd_novos": qtd_novos,
-                            "ultimo": ultimo_txt,
-                            "novos": novos_txts,
-                            "objeto": objeto,
-                        }
+                    mudancas[sei] = {
+                        "qtd_novos": qtd_novos,
+                        "ultimo": ultimo_txt,
+                        "novos": novos_txts,
+                        "objeto": objeto,
+                    }
 
                     print("   ✅ Último doc:", ultimo_txt)
                     if anterior:
@@ -520,8 +502,6 @@ def main():
                         for t in novos_txts:
                             print("   ->", t)
                     print("   🔁 Mudou?    :", "SIM" if mudou else "NÃO")
-                    if screenshot_paths:
-                        print("   📸 Screenshots:", " | ".join(screenshot_paths))
 
                     new_map[sei] = ultimo_txt
                     save_map(new_map)
@@ -533,7 +513,6 @@ def main():
                         "ultimo_doc": ultimo_txt,
                         "mudou": "SIM" if mudou else "NAO",
                         "qtd_novos": qtd_novos,
-                        "screenshot": " | ".join(screenshot_paths)
                     })
 
                 except Exception as e:
